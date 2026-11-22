@@ -123,9 +123,9 @@ Unknown approval requests are denied (fail closed).
 
 ## 8. Known limitations and what we would do with another month
 
-- **The syntax guard covers Python only.** Next: tree-sitter for every language.
-- **Retrieval is lexical** and misses about a quarter of the files a real change touches (benchmark above). Next: embeddings combined with BM25, and links from the import graph.
-- **Fallback is driven by the extension.** The failed turn stays in the session as an error. Next: a TrueForge PR adding native per-agent fallback models.
-- **Models do not always obey.** Some skip tests, so LedgerForge asks once more. In 1 of 3 Task C runs the model proposed again after every hunk was rejected; inline runs now refuse further proposals once you have rejected, whatever the model does.
-- **Undo history is lost on restart.** The run journal lives in memory; git is the backstop.
-- **One workspace folder only, and reviews are sequential.** A 4-file change means several review tabs in a row.
+- **The syntax check is Python-only**, the pinned repository's language. Other languages still get the exact-match guard and per-hunk review. Next: tree-sitter for every language.
+- **Retrieval is lexical.** The pack holds 73% of the changed files before turn 1 (benchmark above); `search_code` and `find_symbol` remain available to the agent for the rest. Next: embeddings combined with BM25, and links from the import graph.
+- **Fallback lives in the extension, not in TrueForge.** It keeps the same session and history; the failed turn stays in the session log as an error. Next: a TrueForge PR adding native per-agent fallback models.
+- **Some rules are enforced by the extension rather than the agent definition**, because models do not always follow instructions: a run that edits without testing is asked once more, and a rejected inline edit cannot be proposed again in that run (seen once in 3 Task C runs before we added it). Next: move them into the agent definition as far as TrueForge allows.
+- **Undo history lasts for the editor session.** After a restart, git is the safety net. Next: persist the run journal in workspace storage.
+- **One workspace folder at a time, and a multi-file change is reviewed one file tab at a time.** Next: a single review view for the whole run.
