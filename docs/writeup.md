@@ -23,7 +23,7 @@ From scratch (no upstream fork), MIT licence. Third-party code is used only as n
 VS Code extension (TypeScript)
  ├─ ForgeClient       trueforge-sdk: sessions, streamed turns, approvals, cancel, session PATCH for fallback
  ├─ Editor MCP server 127.0.0.1:<random port>, Streamable HTTP, per-launch bearer token
- ├─ ContextEngine     @mentions + tf-idf retrieval + link expansion + 8k budget → Context Receipt
+ ├─ ContextEngine     @mentions + tf-idf + link expansion + git co-change, 8k budget → Context Receipt
  ├─ ReviewController  per-hunk diff review, apply accepted hunks only, run journal, undo
  └─ Panel             streaming text, tool feed, Context Receipt, status banner, Explorer badges
 TrueForge (local mode) runs the agent loop, calls the model, calls our MCP server
@@ -41,7 +41,7 @@ TrueForge (local mode) runs the agent loop, calls the model, calls our MCP serve
 | `propose_edit(path, old_text, new_text, reason)` | writes **only the hunks the user accepted** | TrueForge approval |
 | `run_command` | no shell; allowlist of test runners (pytest, python, node, npm test, go test, cargo test) and read-only git | TrueForge approval |
 
-All tools are confined to the workspace and refuse `.git` and secrets files. The agent, not the extension, decides what to read and change.
+All tools are confined to the workspace, following symlinks to check where they really lead, and refuse `.git` and secrets files. The agent, not the extension, decides what to read and change.
 
 **TrueForge approval drives the review.** `propose_edit` and `run_command` are in the agent's `require_approval_for_tools`. When TrueForge emits `tool.approval_required`, the turn pauses and:
 1. A guard checks the edit. `old_text` must occur exactly once, which catches invented code, and Python must still parse.
@@ -76,14 +76,16 @@ Unknown approval requests are denied (fail closed).
 
 1. **@mentions.** The panel autocompletes files and symbols. A mentioned file is pinned whole. A mentioned symbol is pinned as its full definition, including decorators. Mentions come first and count against the budget.
 2. **Retrieval before turn 1.** This works with any model, even one with weak tool use. Files are scored by saturating term frequency × inverse document frequency, doubled when a request term matches the file name (`cli` → `cli.py`).
-3. **Link expansion.** The top 2 implementation files pull in `tests/test_<module>.py`, `docs/<module>.rst` and the changelog. This is how Task B finds the test, docs and changelog without being told.
+3. **Link expansion.** The top 2 implementation files pull in `tests/test_<module>.py`, `docs/<module>.rst` and the changelog. This is how Task B finds the test, docs and changelog without being told. **Git co-change** adds the test file and docs page that most often changed in the same commits, for projects that do not name tests after modules (Flask tests `app.py` in `test_basic.py`). The receipt says so: "changed together with src/flask/app.py in 24 of its last 127 commits".
 4. **8,000-token budget.** Outlines (signatures for code, headings for docs) are packed best first. Anything that ranks lower or doesn't fit is listed as excluded, with its reason. In Task B the pack uses 2,991 / 8,000 tokens, with 10 files in and 5 out. For example, `docs/api.rst` is out as a "weaker match (json, secret, prints) than the files above".
 5. **Scout subagent.** It checks the pack with the search tools and returns ranked files with reasons, so the root agent never sees raw search output.
 6. **Context Receipt.** The panel shows every row (✓/✗, source, tokens, reason) with a budget meter, and marks files as the agent reads them. Explorer badges show 👁 read, ✎ proposed and ✓ applied.
 
+**Measured** (`npm run bench`, `docs/retrieval-benchmark.md`). On 156 real Flask feature and bug-fix commits, with the commit subject as the request and the parent commit as the workspace, the pack puts **73% of the files each commit changed** in front of the model before turn 1: implementation 71%, tests 65%, docs 56%, changelog 100%. Plain ranked search with the same number of files gets 70% (tests 48%). Co-change raised tests from 54% to 65% and was added after the video was recorded; Task B's pack is identical file for file.
+
 **Trade-offs.**
 - Lexical scoring is fast, explainable and needs no dependencies, but it misses synonyms.
-- Link expansion relies on common naming conventions.
+- Link expansion relies on naming conventions; co-change needs git history.
 - Outlines keep the pack small; the agent reads full files itself.
 
 ## 5. Model setup
@@ -115,15 +117,15 @@ Unknown approval requests are denied (fail closed).
 ## 7. Tools used
 
 - **Libraries and tools:** VS Code Extension API, TrueForge and `@truefoundry/trueforge-sdk`, `@modelcontextprotocol/sdk`, `zod`, `diff`, esbuild, TypeScript, Node's test runner.
-- **Unit tests:** 14, run in CI. They cover the workspace jail, edit guard, command allowlist, retrieval, budget, @mentions and hunks.
-- **End-to-end tests:** four scripts drive a real VS Code window against live TrueForge and check `git status`, pytest and the Flask CLI. Task B passed 4 of 4 recorded rehearsals.
+- **Tests:** 39, run in CI. They cover the workspace jail (including symlink escapes), edit guard, command allowlist, retrieval, git co-change, budget, @mentions and hunks (including 200 randomised accept/reject mixes). Eligibility tests fail the build if `src/` names a model provider endpoint, imports a provider SDK or contains a key.
+- **End-to-end tests:** four scripts drive a real VS Code window against live TrueForge and check `git status`, pytest and the Flask CLI. Repeated on the final code (22 Nov): **Task A 8/8, Task B 3/3** (the same 4 files each time, about 55 s), **Task C 5/5**, **Stop 6/6** (14–58 ms). `git status` was clean after every run.
 - **AI coding assistant:** Claude Code (Claude Opus 5.5).
 
 ## 8. Known limitations and what we would do with another month
 
 - **The syntax guard covers Python only.** Next: tree-sitter for every language.
-- **Retrieval is lexical.** Next: embeddings combined with BM25, and links from the import graph instead of naming conventions.
+- **Retrieval is lexical** and misses about a quarter of the files a real change touches (benchmark above). Next: embeddings combined with BM25, and links from the import graph.
 - **Fallback is driven by the extension.** The failed turn stays in the session as an error. Next: a TrueForge PR adding native per-agent fallback models.
-- **Models sometimes skip tests.** LedgerForge then asks once more; we would enforce this in the agent definition instead.
+- **Models do not always obey.** Some skip tests, so LedgerForge asks once more. In 1 of 3 Task C runs the model proposed again after every hunk was rejected; inline runs now refuse further proposals once you have rejected, whatever the model does.
 - **Undo history is lost on restart.** The run journal lives in memory; git is the backstop.
 - **One workspace folder only, and reviews are sequential.** A 4-file change means several review tabs in a row.

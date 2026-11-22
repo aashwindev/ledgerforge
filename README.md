@@ -152,7 +152,7 @@ scripts/e2e.sh cancel ../forge-agent-flask-rehearsal   # stop mid-stream and aft
 
 **Measured retrieval** ([full results](docs/retrieval-benchmark.md)): on 156 real Flask feature and bug-fix commits, with the commit subject as the request and the parent commit as the workspace, the Context Pack puts 73% of the files each commit changed in front of the model before turn 1 (tests 65%, changelog 100%), against 70% (tests 48%) for plain ranked search given the same number of files. At least one changed implementation file is in the pack in 91% of cases.
 
-**Measured agent runs:** Task B found and edited the same 4 files in 4 of 4 recorded rehearsals. Stop takes 24–72 ms, after which `git status` is clean. Task A also passes on the smaller `gpt-5-4-nano` (diff in 3.1 s), for the organisers' live re-run.
+**Measured agent runs** (repeated on the final code, 22 Nov): Task A 8/8, Task B 3/3 (the same 4 files each time), Task C 5/5, Stop 6/6 in 14–58 ms, with `git status` clean after every run. Task A also passes on the smaller `gpt-5-4-nano` (diff in 3.1 s), for the organisers' live re-run.
 
 ## Limitations
 

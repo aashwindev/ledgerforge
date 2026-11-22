@@ -23,7 +23,7 @@ const FIRST_EVENT_TIMEOUT_MS = 20_000;
 const IDLE_TIMEOUT_MS = 150_000; // longer than the 120 s run_command timeout
 
 export class Runner {
-  private active?: { abort: AbortController; sessionId?: string; attemptId: string; runId: string; allowCommands: boolean; approved: Set<string>; ranTests: boolean };
+  private active?: { abort: AbortController; sessionId?: string; attemptId: string; runId: string; kind: AgentKind; allowCommands: boolean; approved: Set<string>; ranTests: boolean; inlineDeclined?: boolean };
   private seq = 0;
 
   constructor(
@@ -51,7 +51,7 @@ export class Runner {
     const models = [cfg.get<string>('model'), cfg.get<string>('fallbackModel')].filter((m): m is string => !!m && !m.startsWith('<'));
     const runId = `run-${++this.seq}`;
     const abort = new AbortController();
-    this.active = { abort, runId, attemptId: runId, allowCommands: false, approved: new Set(), ranTests: false };
+    this.active = { abort, runId, attemptId: runId, kind, allowCommands: false, approved: new Set(), ranTests: false };
     this.ui.begin(label);
     let input = message;
     if (kind === 'ledgerforge-agent') {
@@ -182,6 +182,13 @@ export class Runner {
     for (const c of calls) {
       if (c.name === 'propose_edit') {
         const a = c.args as EditArgs;
+        // Inline edit: once the user has rejected the whole proposal, that answer stands for this run,
+        // whatever the model does next. No second review pops up.
+        if (this.active?.inlineDeclined) {
+          this.ui.log('guard', `Blocked: you already rejected this inline edit; not opening another review for ${a.path}.`);
+          decisions.push({ toolCallId: c.toolCallId, threadId: c.threadId, allow: false, reason: 'The user already rejected this inline edit. Do not propose any more edits. Reply with one line saying nothing was changed.' });
+          continue;
+        }
         const v = await validateEdit(this.ws, a, simulated.get(a.path));
         if (!v.ok) {
           this.ui.log('guard', `Blocked before review: ${v.error}`);
@@ -209,6 +216,7 @@ export class Runner {
           ? { toolCallId: call.toolCallId, threadId: call.threadId, allow: true }
           : { toolCallId: call.toolCallId, threadId: call.threadId, allow: false, reason: `The user rejected every hunk of this edit to ${item.args.path}. Nothing was written. Do not propose it again.` });
       }
+      if (this.active?.kind === 'ledgerforge-inline' && items.every(({ item }) => !result?.get(item.key)?.size)) this.active.inlineDeclined = true;
     }
     return decisions;
   }
