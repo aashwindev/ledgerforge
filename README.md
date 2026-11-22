@@ -139,6 +139,7 @@ Settings: `ledgerforge.baseUrl`, `ledgerforge.model`, `ledgerforge.fallbackModel
 npm test            # 39 tests, run in CI: provider-free eligibility, workspace jail (incl. symlink escapes), edit guard,
                     # command allowlist, retrieval, git co-change, budget, @mentions, hunks (incl. 200 randomised accept/reject mixes)
 npm run bench -- ../forge-agent-flask-rehearsal --out docs/retrieval-benchmark.md   # retrieval on 156 real Flask commits
+npm run check       # submission rules: write-up headings, pages and scorecard rows, README setup, approval gates, no secrets
 ```
 
 End to end, each in a real, isolated VS Code window against live TrueForge, on Flask 3.1.3 (`22d92470`):

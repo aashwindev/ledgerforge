@@ -151,6 +151,7 @@
     "watch": "npm run build -- --watch",
     "test": "esbuild test/unit.test.ts test/hunks.test.ts test/eligibility.test.ts test/safety.test.ts --bundle --platform=node --format=cjs --outdir=dist/test --log-level=warning && node --test dist/test/unit.test.js dist/test/hunks.test.js dist/test/eligibility.test.js dist/test/safety.test.js",
     "typecheck": "tsc -p . --noEmit",
+    "check": "node scripts/check-submission.mjs",
     "bench": "esbuild scripts/bench-retrieval.ts --bundle --platform=node --outfile=dist/bench.js --log-level=warning && node dist/bench.js"
   },
   "devDependencies": {
