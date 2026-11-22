@@ -21,10 +21,9 @@ export class Workspace {
   /** Resolve a workspace-relative path, refusing anything outside the root or secret-looking. */
   resolve(rel: string): string {
     const abs = path.resolve(this.root, rel);
-    const relToRoot = path.relative(this.root, abs);
-    if (relToRoot.startsWith('..') || path.isAbsolute(relToRoot)) throw new Error(`Path is outside the workspace: ${rel}`);
-    if (relToRoot.split(path.sep).includes('.git')) throw new Error(`Path is not readable: ${rel}`);
-    if (BLOCKED.test(relToRoot)) throw new Error(`Refusing to touch a secrets file: ${rel}`);
+    check(path.relative(this.root, abs), rel);
+    // Follow symlinks too: a link inside the workspace must not lead outside it.
+    check(path.relative(realRoot(this.root), realPath(abs)), rel);
     return abs;
   }
 
@@ -68,4 +67,30 @@ export class Workspace {
   invalidate() { this.cache = undefined; }
 }
 
-export const estimateTokens = (s: string) => Math.ceil(s.length / 4);
+function check(relToRoot: string, rel: string) {
+  if (relToRoot.startsWith('..') || path.isAbsolute(relToRoot)) throw new Error(`Path is outside the workspace: ${rel}`);
+  if (relToRoot.split(path.sep).includes('.git')) throw new Error(`Path is not readable: ${rel}`);
+  if (BLOCKED.test(relToRoot.split(path.sep).join('/'))) throw new Error(`Refusing to touch a secrets file: ${rel}`);
+}
+
+const realRoots = new Map<string, string>();
+function realRoot(root: string): string {
+  let r = realRoots.get(root);
+  if (!r) realRoots.set(root, (r = realPath(root)));
+  return r;
+}
+
+/** realpath of the deepest existing ancestor, plus the not-yet-existing tail (new files). */
+function realPath(abs: string): string {
+  const tail: string[] = [];
+  let cur = abs;
+  for (;;) {
+    try { return path.join(fs.realpathSync(cur), ...tail); } catch { /* not there yet */ }
+    const parent = path.dirname(cur);
+    if (parent === cur) return abs;
+    tail.unshift(path.basename(cur));
+    cur = parent;
+  }
+}
+
+export const estimateTokens =(s: string) => Math.ceil(s.length / 4);
