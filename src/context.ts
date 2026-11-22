@@ -1,3 +1,4 @@
+import { execFile } from 'child_process';
 import * as path from 'path';
 import { terms } from './tools';
 import { Workspace, estimateTokens } from './workspace';
@@ -6,7 +7,8 @@ import { resolveMentions } from './mentions';
 // Automatic retrieval before the first turn, independent of the model:
 // 1. score every file by idf-weighted overlap with the request;
 // 2. take the best implementation files as seeds and follow their links
-//    (module -> tests/test_<module>.py -> docs page of the same name -> changelog);
+//    (module -> tests/test_<module>.py -> docs page of the same name -> changelog),
+//    plus the tests and docs that git history shows changing together with it;
 // 3. pack outlines (signatures / headings) into a fixed token budget, best first;
 // 4. report what was included, what was left out, and why (the Context Receipt).
 
@@ -14,6 +16,8 @@ export const CONTEXT_BUDGET = 8000;
 const SEEDS = 2;
 const MAX_CANDIDATES = 10;
 const OUTLINE_LINES = 60;
+const COCHANGE_COMMITS = 300; // how far back to look in git history
+const COCHANGE_MIN = 3; // a test or docs file must have changed with the seed at least this often
 
 export interface ReceiptRow { path: string; source: 'mention' | 'auto' | 'linked' | 'agent'; reason: string; tokens: number; included: boolean }
 export interface ContextPack { message: string; rows: ReceiptRow[]; used: number; budget: number; strategy: string }
@@ -60,10 +64,18 @@ export async function buildContextPack(ws: Workspace, request: string, budget = 
       if (isTest(f) && (base === `test_${mod}.py` || base === `${mod}.test.ts`)) add(f, 'linked', `tests for ${s.f}`);
       if (isDoc(f) && !isChangelog(f) && base.replace(/\.\w+$/, '') === mod) add(f, 'linked', `docs page for ${s.f}`);
     }
+    // Tests and docs are often not named after the module (Flask tests app.py in test_basic.py).
+    // Git history knows: take the test file and the docs page that changed with it most often.
+    const co = await coChanged(ws.root, s.f);
+    for (const kind of [isTest, (f: string) => isDoc(f) && !isChangelog(f)]) {
+      const best = co.find(c => kind(c.f) && c.n >= COCHANGE_MIN);
+      if (best) add(best.f, 'linked', `changed together with ${s.f} in ${best.n} of its last ${best.total} commits`);
+    }
   }
   const changelog = files.find(f => isChangelog(f));
   if (changelog) add(changelog, 'linked', 'project changelog: user-facing changes are recorded here');
-  for (const s of scored) if (picks.length < MAX_CANDIDATES) add(s.f, 'auto', why(s.f));
+  const coPicks = picks.filter(p => p.reason.startsWith('changed together')).length;
+  for (const s of scored) if (picks.length < MAX_CANDIDATES + coPicks) add(s.f, 'auto', why(s.f));
 
   // Pack outlines best-first; whatever does not fit is excluded, with the reason.
   const rows: ReceiptRow[] = [];
@@ -91,7 +103,7 @@ export async function buildContextPack(ws: Workspace, request: string, budget = 
     if (!picks.some(p => p.f === s.f)) rows.push({ path: s.f, source: 'auto', reason: `left out: weaker match (${s.hits.slice(0, 3).join(', ')}) than the files above`, tokens: 0, included: false });
   }
 
-  const strategy = `@mentions pinned first, then idf-ranked retrieval, top ${SEEDS} implementation files expanded to their tests, docs page and the changelog; outlines packed into ${budget} tokens`;
+  const strategy = `@mentions pinned first, then idf-ranked retrieval, top ${SEEDS} implementation files expanded to their tests, docs page, git co-changed tests and docs, and the changelog; outlines packed into ${budget} tokens`;
   const message = [
     `Context pack (chosen by the editor before this turn: ${strategy}; ${used}/${budget} tokens). These are outlines only: read_file before editing. Other files may matter too.`,
     ...blocks,
@@ -100,6 +112,20 @@ export async function buildContextPack(ws: Workspace, request: string, budget = 
     `Request: ${request}`,
   ].join('\n\n');
   return { message, rows, used, budget, strategy };
+}
+
+/** Files that changed in the same commits as `file`, most frequent first. Empty outside git. */
+function coChanged(root: string, file: string): Promise<{ f: string; n: number; total: number }[]> {
+  const args = ['-C', root, 'log', '-n', String(COCHANGE_COMMITS), '--no-merges', '--full-diff', '--format=%x00', '--name-only', '--', file];
+  return new Promise(resolve => {
+    execFile('git', args, { maxBuffer: 16 * 1024 * 1024, timeout: 5000 }, (err, stdout) => {
+      if (err) return resolve([]);
+      const commits = stdout.split('\0').map(b => b.split('\n').filter(Boolean)).filter(c => c.length);
+      const counts = new Map<string, number>();
+      for (const c of commits) for (const f of c) if (f !== file) counts.set(f, (counts.get(f) ?? 0) + 1);
+      resolve([...counts].map(([f, n]) => ({ f, n, total: commits.length })).sort((a, b) => b.n - a.n));
+    });
+  });
 }
 
 function count(hay: string, needle: string): number {

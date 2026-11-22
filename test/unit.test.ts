@@ -122,3 +122,26 @@ test('hunks: per-hunk accept applies only the chosen hunks', () => {
   assert.equal(applyHunks(before, hunks, () => true), after);
   assert.equal(applyHunks(before, hunks, () => false), before);
 });
+
+test('context pack: git co-change finds tests that are not named after the module', async () => {
+  const { execFileSync } = await import('child_process');
+  const ws = fixture();
+  const g = (...a: string[]) => execFileSync('git', ['-C', ws.root, ...a], { stdio: 'ignore' });
+  const w = (p: string, s: string) => { fs.mkdirSync(path.dirname(path.join(ws.root, p)), { recursive: true }); fs.appendFileSync(path.join(ws.root, p), s); };
+  g('init', '-q'); g('config', 'user.email', 't@t'); g('config', 'user.name', 't');
+  g('add', '-A'); g('commit', '-qm', 'base');
+  for (let i = 0; i < 3; i++) {
+    w('src/pkg/helpers.py', `# change ${i}\n`);
+    w('tests/test_basic.py', `def test_debug_${i}():\n    pass\n`);
+    g('add', '-A'); g('commit', '-qm', `debug fix ${i}`);
+  }
+  const pack = await buildContextPack(ws, 'Make get_debug_flag treat off as false');
+  const row = pack.rows.find(r => r.path === 'tests/test_basic.py');
+  assert.ok(row?.included, 'co-changed test file is in the pack');
+  assert.match(row!.reason, /changed together with src\/pkg\/helpers\.py in 3 of its last 4 commits/);
+});
+
+test('context pack: outside a git repository co-change is skipped quietly', async () => {
+  const pack = await buildContextPack(fixture(), 'Make get_debug_flag treat off as false');
+  assert.ok(!pack.rows.some(r => /changed together/.test(r.reason)));
+});

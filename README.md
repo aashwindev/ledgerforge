@@ -108,7 +108,7 @@ VS Code extension (TypeScript)
  ├─ ForgeClient       @truefoundry/trueforge-sdk: sessions, streamed turns, approvals, cancel, retry/fallback
  ├─ Editor MCP server 127.0.0.1:<random port>, Streamable HTTP, per-launch bearer token
  │                    tools: search_code, find_symbol, read_file, propose_edit*, run_command*   (* approval-gated)
- ├─ ContextEngine     tf-idf retrieval + link expansion (module → tests → docs → changelog), 8k-token budget
+ ├─ ContextEngine     tf-idf retrieval + link expansion (module → tests → docs → changelog) + git co-change, 8k-token budget
  ├─ ReviewController  per-hunk diff review, apply accepted hunks only, run journal, undo
  └─ Panel             streaming text, tool feed, Context Receipt, status/fallback banner, Explorer badges
 TrueForge (local) runs the agent loop, calls the model, and calls the MCP server.
@@ -136,7 +136,9 @@ Settings: `ledgerforge.baseUrl`, `ledgerforge.model`, `ledgerforge.fallbackModel
 ## Tests
 
 ```
-npm test            # 14 unit tests: workspace jail, edit guard, command allowlist, retrieval, budget, @mentions, hunks (run in CI)
+npm test            # 39 tests, run in CI: provider-free eligibility, workspace jail (incl. symlink escapes), edit guard,
+                    # command allowlist, retrieval, git co-change, budget, @mentions, hunks (incl. 200 randomised accept/reject mixes)
+npm run bench -- ../forge-agent-flask-rehearsal --out docs/retrieval-benchmark.md   # retrieval on 156 real Flask commits
 ```
 
 End to end, each in a real, isolated VS Code window against live TrueForge, on Flask 3.1.3 (`22d92470`):
@@ -148,14 +150,16 @@ scripts/e2e.sh taskC  ../forge-agent-flask-rehearsal   # broken primary → auto
 scripts/e2e.sh cancel ../forge-agent-flask-rehearsal   # stop mid-stream and after an applied hunk → clean
 ```
 
-**Measured:** Task B found and edited the same 4 files in 4 of 4 recorded rehearsals. Stop takes 24–72 ms, after which `git status` is clean. Task A also passes on the smaller `gpt-5-4-nano` (diff in 3.1 s), for the organisers' live re-run.
+**Measured retrieval** ([full results](docs/retrieval-benchmark.md)): on 156 real Flask feature and bug-fix commits, with the commit subject as the request and the parent commit as the workspace, the Context Pack puts 73% of the files each commit changed in front of the model before turn 1 (tests 65%, changelog 100%), against 70% (tests 48%) for plain ranked search given the same number of files. At least one changed implementation file is in the pack in 91% of cases.
+
+**Measured agent runs:** Task B found and edited the same 4 files in 4 of 4 recorded rehearsals. Stop takes 24–72 ms, after which `git status` is clean. Task A also passes on the smaller `gpt-5-4-nano` (diff in 3.1 s), for the organisers' live re-run.
 
 ## Limitations
 
 These are stated plainly; details and next steps are in [write-up §8](docs/writeup.pdf).
 
 - The syntax guard covers Python only.
-- Retrieval is lexical (tf-idf plus links), not embeddings.
+- Retrieval is lexical (tf-idf, links and git co-change), not embeddings. It misses about a quarter of the files a real change touches (see the benchmark).
 - Fallback is driven by the extension, not native to TrueForge.
 - The undo journal lives in memory, so git is the backstop after a restart.
 - One workspace folder at a time.
